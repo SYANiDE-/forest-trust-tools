@@ -1,3 +1,6 @@
+#!/usr/bin/python3
+
+import argparse
 from struct import unpack, pack
 from impacket.structure import Structure
 import binascii
@@ -35,8 +38,11 @@ import sys
 class KeyTab(Structure):
     structure = (("file_format_version", "H=517"), ("keytab_entry", ":"))
 
-    def fromString(self, data):
+    def __init__(self):
+        super().__init__()
         self.entries = []
+
+    def fromString(self, data):
         Structure.fromString(self, data)
         data = self["keytab_entry"]
         while len(data) != 0:
@@ -49,6 +55,21 @@ class KeyTab(Structure):
         self["keytab_entry"] = b"".join([entry.getData() for entry in self.entries])
         data = Structure.getData(self)
         return data
+
+    def append_entry(self, username, etype, secret):
+        ktcr = KeyTabContentRest()
+        ktcr["keytype"] = etype
+        ktcr["key"] = binascii.unhexlify(secret)
+        nktcontent = KeyTabContent()
+        nktcontent.restfields = ktcr
+        # The realm here doesn't matter for wireshark but does of course for a real keytab
+        nktcontent["realm"] = b"TESTSEGMENT.LOCAL"
+        user = OctetString()
+        user["value"] = username
+        nktcontent.components = [user]
+        nktentry = KeyTabEntry()
+        nktentry["content"] = nktcontent
+        self.entries.append(nktentry)
 
 
 class OctetString(Structure):
@@ -102,44 +123,91 @@ class KeyTabEntry(Structure):
     structure = (("size", ">I-content"), ("content", ":", KeyTabContent))
 
 
-# Add your own keys here!
-# Keys are tuples in the form (keytype, 'hexencodedkey')
-# Common keytypes for Windows:
-# 23: RC4
-# 18: AES-256
-# 17: AES-128
-# Wireshark takes any number of keys in the keytab, so feel free to add
-# krbtgt keys, service keys, trust keys etc
-keys = [
-    (23, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-    (18, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-    (17, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-    (18, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-    (23, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-]
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Convert impacket's secretsdump.py Kerberos secrets into keytab file format "
+            + "suitable for loading into Wireshark for ticket decryption. "
+            + "Based on https://github.com/dirkjanm/forest-trust-tools."
+        )
+    )
 
-nkt = KeyTab()
-nkt.entries = []
+    parser.add_argument(
+        "infile",
+        help=(
+            'NTDS dump obtained with impacket; for example "hashes.ntds.kerberos" when dumping hashes with: '
+            + 'secretsdump.py "$DOMAIN/$USR:$PASS@$DC" -outputfile hashes'
+        ),
+    )
 
-for key in keys:
-    ktcr = KeyTabContentRest()
-    ktcr["keytype"] = key[0]
-    ktcr["key"] = binascii.unhexlify(key[1])
-    nktcontent = KeyTabContent()
-    nktcontent.restfields = ktcr
-    # The realm here doesn't matter for wireshark but does of course for a real keytab
-    nktcontent["realm"] = b"TESTSEGMENT.LOCAL"
-    krbtgt = OctetString()
-    krbtgt["value"] = "krbtgt"
-    nktcontent.components = [krbtgt]
-    nktentry = KeyTabEntry()
-    nktentry["content"] = nktcontent
-    nkt.entries.append(nktentry)
+    parser.add_argument("outfile", help="Name of the output keytab file")
 
-data = nkt.getData()
-if len(sys.argv) < 2:
-    print("Usage: keytab.py <outputfile>")
-    print("Keys should be written to the source manually")
-else:
-    with open(sys.argv[1], "wb") as outfile:
+    return parser.parse_args()
+
+
+# https://www.iana.org/assignments/kerberos-parameters/kerberos-parameters.xhtml
+def get_etype_number(s):
+    if s.startswith("0x"):
+        return int(s, 16)
+    elif s == "des-cbc-crc":
+        return 1
+    elif s == "des-cbc-md4":
+        return 2
+    elif s == "des-cbc-md5":
+        return 3
+    elif s == "des3-cbc-md5":
+        return 5
+    elif s == "des3-cbc-sha1":
+        return 7
+    elif s == "dsaWithSHA1-CmsOID":
+        return 9
+    elif s == "md5WithRSAEncryption-CmsOID":
+        return 10
+    elif s == "sha1WithRSAEncryption-CmsOID":
+        return 11
+    elif s == "rc2CBC-EnvOID":
+        return 12
+    elif s == "rsaEncryption-EnvOID":
+        return 13
+    elif s == "rsaES-OAEP-ENV-OID":
+        return 14
+    elif s == "des-ede3-cbc-Env-OID":
+        return 15
+    elif s == "des3-cbc-sha1-kd":
+        return 16
+    elif s == "aes128-cts-hmac-sha1-96":
+        return 17
+    elif s == "aes256-cts-hmac-sha1-96":
+        return 18
+    elif s == "aes128-cts-hmac-sha256-128":
+        return 19
+    elif s == "aes256-cts-hmac-sha384-192":
+        return 20
+    elif s == "rc4-hmac":
+        return 23
+    elif s == "rc4-hmac-exp":
+        return 24
+    elif s == "camellia128-cts-cmac":
+        return 25
+    elif s == "camellia256-cts-cmac":
+        return 26
+
+
+def main():
+    args = parse_args()
+
+    nkt = KeyTab()
+
+    with open(args.infile, "r") as f:
+        for line in f:
+            username, etype, secret = line.strip().split(":")
+            etype = get_etype_number(etype)
+            nkt.append_entry(username, etype, secret)
+
+    data = nkt.getData()
+    with open(args.outfile, "wb") as outfile:
         outfile.write(data)
+
+
+if __name__ == "__main__":
+    main()
