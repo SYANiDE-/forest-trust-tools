@@ -56,14 +56,14 @@ class KeyTab(Structure):
         data = Structure.getData(self)
         return data
 
-    def append_entry(self, username, etype, secret):
+    def append_entry(self, domain, username, etype, secret):
         ktcr = KeyTabContentRest()
         ktcr["keytype"] = etype
         ktcr["key"] = binascii.unhexlify(secret)
         nktcontent = KeyTabContent()
         nktcontent.restfields = ktcr
         # The realm here doesn't matter for wireshark but does of course for a real keytab
-        nktcontent["realm"] = b"TESTSEGMENT.LOCAL"
+        nktcontent["realm"] = domain
         user = OctetString()
         user["value"] = username
         nktcontent.components = [user]
@@ -127,9 +127,9 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Convert impacket's secretsdump.py Kerberos secrets into keytab file format "
-            + "suitable for loading into Wireshark for ticket decryption. "
-            + "Based on https://github.com/dirkjanm/forest-trust-tools."
-        )
+            + "suitable for loading into Wireshark for ticket decryption."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     parser.add_argument(
@@ -142,7 +142,19 @@ def parse_args():
 
     parser.add_argument("outfile", help="Name of the output keytab file")
 
-    return parser.parse_args()
+    parser.add_argument(
+        "-d",
+        "--domain",
+        help=(
+            "Active Directory domain (e.g. mydomain.local); "
+            + "this name should not matter in most cases."
+        ),
+        default="TESTSEGMENT.LOCAL",
+    )
+
+    args = parser.parse_args()
+    args.domain = args.domain.upper().encode("utf8")
+    return args
 
 
 # https://www.iana.org/assignments/kerberos-parameters/kerberos-parameters.xhtml
@@ -202,7 +214,7 @@ def main():
         for line in f:
             username, etype, secret = line.strip().split(":")
             etype = get_etype_number(etype)
-            nkt.append_entry(username, etype, secret)
+            nkt.append_entry(args.domain, username, etype, secret)
 
     data = nkt.getData()
     with open(args.outfile, "wb") as outfile:
