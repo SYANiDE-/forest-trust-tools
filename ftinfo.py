@@ -5,12 +5,13 @@
 # Author:
 #  Dirk-jan Mollema (@_dirkjan)
 #
-import binascii, argparse, sys
+import binascii, argparse, sys, base64
 from impacket.structure import Structure
 from impacket.ldap.ldaptypes import LDAP_SID
+from IPython import embed
 
-# Example data from ADUC here for analysis
 EXAMPLE_STRUCT = (
+    # Example msDs-TrustForestTrustInfo from Active Directory Users and Computers
     "01 00 00 00 04 00 00 00 1B 00 00 00 00 00 00 00 C2 72 D5 01 4E D9 12 F5 00 "
     "0A 00 00 00 64 6F 6D 64 2E 6C 6F 63 61 6C 48 00 00 00 00 00 00 00 47 76 D5 "
     "01 BF EC A6 77 02 18 00 00 00 01 04 00 00 00 00 00 05 15 00 00 00 9A D8 33 "
@@ -22,7 +23,15 @@ EXAMPLE_STRUCT = (
     "F5 02 18 00 00 00 01 04 00 00 00 00 00 05 15 00 00 00 50 58 04 7A 06 B4 A7 "
     "5C 1D 99 68 A2 0A 00 00 00 64 6F 6D 64 2E 6C 6F 63 61 6C 04 00 00 00 64 6F "
     "6D 64"
+    "\nOR\n"
+    # Example msDs-TrustForestTrustInfo from powerview.py (https://github.com/aniqfakhrul/powerview.py.git)
+    # Get-DomainObject -LDAPFilter "(&(objectClass=trustedDomain))" -Server dc02.logistics.ad -Identity inlanefreight.ad -Properties 'msDS-TrustForestTrustInfo' -Raw
+    "AQAAAAMAAAAhAAAAAAAAABg42gEG/iB2ABAAAABpbmxhbmVmcmVpZ2h0LmFkTAAAAAAAAABGddo"
+    "BfQJrvQIYAAAAAQQAAAAAAAUVAAAAHhAx5zpJugN1C+wmFgAAAGNoaWxkLmlubGFuZWZyZWlnaH"
+    "QuYWQFAAAAQ0hJTEROAAAAAAAAABg42gEG/iB2AhgAAAABBAAAAAAABRUAAAA7T/yQYZ1WCt9dN"
+    "ckQAAAAaW5sYW5lZnJlaWdodC5hZA0AAABJTkxBTkVGUkVJR0hU" ## base64
 )
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="msDS-TrustForestTrustInfo struct parser")
@@ -61,8 +70,10 @@ class FOREST_TRUST_RECORD_TOPLEVELNAME(Structure):
         ('Name',':')
     )
 
+
 class FOREST_TRUST_RECORD_TOPLEVELNAME_EX(FOREST_TRUST_RECORD_TOPLEVELNAME):
     pass
+
 
 class FOREST_TRUST_RECORD_DOMAININFO(Structure):
     structure = (
@@ -73,6 +84,7 @@ class FOREST_TRUST_RECORD_DOMAININFO(Structure):
         ('NetbiosNameLen','<I-NetbiosName'),
         ('NetbiosName',':')
     )
+
 
 class FOREST_TRUST_INFO(Structure):
     structure = (
@@ -88,9 +100,46 @@ class FOREST_TRUST_INFO(Structure):
             self['Records'].append(FOREST_TRUST_INFO_RECORD(rdata))
             rdata = rdata[len(self['Records'][-1]):]
 
+
+class NORMALIZER():
+    def __init__(self,structarg):
+        self.holder = structarg
+        self.runtime()
+    
+    def unhexlify(self):
+        didit = False
+        try:
+            tmp = binascii.unhexlify(self.holder.replace(' ',''))
+            didit = True
+        except:
+            tmp = self.holder
+        return tmp, didit
+
+    def base64decode(self):
+        didit = False
+        try:
+            base64.b64decode(self.holder,validate=True)
+            tmp = base64.b64decode(self.holder)
+        except:
+            tmp = self.holder
+        return tmp, didit
+
+    def runtime(self):
+        trials = [self.unhexlify,self.base64decode]
+        converted = False
+        for func in trials:
+            try:
+                if converted == False:
+                    self.holder, didit = func()
+                    if didit == True:
+                        converted == True
+            except:
+                pass
+
+
 def main():
     args = get_args()
-    struct_dat = binascii.unhexlify(args['struct'].replace(' ',''))
+    struct_dat = NORMALIZER(args['struct']).holder
     fi = FOREST_TRUST_INFO(struct_dat)
     fi.dump()
     for record in fi['Records']:
@@ -102,6 +151,7 @@ def main():
             print(f'Domain {dnsName} has SID {sid.getData()}')
         except KeyError:
             pass
+
 
 if __name__=="__main__":
     main()
