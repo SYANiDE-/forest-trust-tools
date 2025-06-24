@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python2
 from __future__ import print_function
 import sys, struct, re, argparse, frida
 ### Python 2 version
@@ -33,7 +33,6 @@ def pack_sid_le_octalhex(sid):
         "0x00, 0x00, 0x00, 0x05, "
         "0x15, 0x00, 0x00, 0x00, "
         "%s]" % hexbyte_string)
-        # f"{hexbyte_string}]")
     return final_string
 
 
