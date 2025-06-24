@@ -120,6 +120,7 @@ class NORMALIZER():
         try:
             base64.b64decode(self.holder,validate=True)
             tmp = base64.b64decode(self.holder)
+            didit = True
         except:
             tmp = self.holder
         return tmp, didit
